@@ -266,6 +266,35 @@ export async function ensureLabel(email, name) {
   });
 }
 
+// Deletes a user label by name or ID. System labels (INBOX, SPAM, ...) are refused.
+export async function deleteLabel(email, nameOrId) {
+  const gmail = await getGmail(email);
+  return run(email, async () => {
+    const { data } = await gmail.users.labels.list({ userId: 'me' });
+    const all = data.labels ?? [];
+    const target = all.find(
+      l => l.id === nameOrId || l.name.toLowerCase() === String(nameOrId).toLowerCase()
+    );
+    if (!target) throw new Error(`No label matching "${nameOrId}".`);
+    if (target.type === 'system') throw new Error(`"${target.name}" is a system label and cannot be deleted.`);
+    await gmail.users.labels.delete({ userId: 'me', id: target.id });
+    return { id: target.id, name: target.name, deleted: true };
+  });
+}
+
+// Lists user labels whose name starts with a prefix (e.g. "[Superhuman]"), deepest first
+// so children are removed before their parents.
+export async function findLabelsByPrefix(email, prefix) {
+  const gmail = await getGmail(email);
+  return run(email, async () => {
+    const { data } = await gmail.users.labels.list({ userId: 'me' });
+    return (data.labels ?? [])
+      .filter(l => l.type !== 'system' && l.name.toLowerCase().startsWith(String(prefix).toLowerCase()))
+      .map(l => ({ id: l.id, name: l.name }))
+      .sort((a, b) => b.name.split('/').length - a.name.split('/').length);
+  });
+}
+
 export async function listFilters(email) {
   const gmail = await getGmail(email);
   return run(email, async () => {

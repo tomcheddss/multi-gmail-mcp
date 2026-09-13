@@ -125,6 +125,7 @@ Restart Claude Desktop after saving. Click the hammer icon to confirm 19 tools a
 | `sender_stats` | Per-sender volume/unread/unsubscribe stats for a query — start triage here |
 | `bulk_modify` | Archive, trash, mark read or relabel every message matching a query (dry-run by default) |
 | `get_unsubscribe_info` / `unsubscribe` | Read List-Unsubscribe headers; one-click POST, mailto, or manual URL |
+| `delete_label` / `delete_label_tree` | Remove a label, or a whole nested family by prefix |
 | `create_label` / `list_filters` / `create_filter` / `delete_filter` | Labels and Gmail filters |
 | `list_calendars` / `list_calendar_events` / `get_calendar_event` / `delete_calendar_event` | Google Calendar, incl. recurring series cleanup |
 | `get_attachment` | Download one attachment to `~/.gmail-mcp-cache` (owner-only, pruned after 24h) and return its path |

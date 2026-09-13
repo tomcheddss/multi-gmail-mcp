@@ -24,6 +24,8 @@ import {
   getUnsubscribeInfo,
   unsubscribe,
   ensureLabel,
+  deleteLabel,
+  findLabelsByPrefix,
   listFilters,
   createFilter,
   deleteFilter,
@@ -446,6 +448,42 @@ const TOOLS = [
     },
   },
   {
+    name: 'delete_label',
+    description:
+      'Delete a user label by name or ID. Messages are not deleted, they just lose the label. ' +
+      'System labels cannot be removed. Use delete_label_tree to remove a whole nested family.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: {
+          type: 'string',
+          description: 'Email address or label. Uses active account if omitted.',
+        },
+        name: { type: 'string', description: 'Label name or ID' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'delete_label_tree',
+    description:
+      'Delete every user label whose name starts with a prefix, children first ' +
+      '(e.g. prefix "[Superhuman]" removes the parent and all nested labels). ' +
+      'Messages keep existing; they only lose these labels. Confirm with the user before calling.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: {
+          type: 'string',
+          description: 'Email address or label. Uses active account if omitted.',
+        },
+        prefix: { type: 'string', description: 'Label name prefix, e.g. "[Superhuman]"' },
+        dry_run: { type: 'boolean', description: 'Only list what would be deleted (default true)' },
+      },
+      required: ['prefix'],
+    },
+  },
+  {
     name: 'list_filters',
     description: 'List Gmail filters (criteria and actions) on an account.',
     inputSchema: { type: 'object', properties: {
@@ -816,6 +854,34 @@ export function createServer() {
           const email = resolveAccount(args.account, activeAccount);
           const l = await ensureLabel(email, args.name);
           text = `${l.created ? 'Created' : 'Already exists'}: ${l.name} (id ${l.id})`;
+          break;
+        }
+
+        case 'delete_label': {
+          const email = resolveAccount(args.account, activeAccount);
+          const l = await deleteLabel(email, args.name);
+          text = `Deleted label "${l.name}" (${l.id}) on ${email}.`;
+          break;
+        }
+
+        case 'delete_label_tree': {
+          const email = resolveAccount(args.account, activeAccount);
+          const found = await findLabelsByPrefix(email, args.prefix);
+          if (!found.length) {
+            text = `No labels start with "${args.prefix}" on ${email}.`;
+            break;
+          }
+          if (args.dry_run !== false) {
+            text = `Dry run: ${found.length} label(s) would be deleted on ${email}:\n` +
+              found.map(l => `  ${l.name}`).join('\n');
+            break;
+          }
+          const done = [];
+          for (const l of found) {
+            await deleteLabel(email, l.id);
+            done.push(l.name);
+          }
+          text = `Deleted ${done.length} label(s) on ${email}:\n` + done.map(n => `  ${n}`).join('\n');
           break;
         }
 
