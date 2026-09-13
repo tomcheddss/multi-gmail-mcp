@@ -85,3 +85,24 @@ describe('summarizeEvent', () => {
     assert.equal(inst.start, '2024-01-08');
   });
 });
+
+describe('withBackoff', () => {
+  it('retries rate-limit errors and then succeeds', async () => {
+    const { withBackoff } = await import('../src/cleanup.js');
+    let calls = 0;
+    const r = await withBackoff(async () => {
+      calls += 1;
+      if (calls < 3) throw Object.assign(new Error('Quota exceeded for quota metric'), { code: 429 });
+      return 'ok';
+    }, { baseMs: 1 });
+    assert.equal(r, 'ok');
+    assert.equal(calls, 3);
+  });
+
+  it('does not retry other errors', async () => {
+    const { withBackoff } = await import('../src/cleanup.js');
+    let calls = 0;
+    await assert.rejects(withBackoff(async () => { calls += 1; throw new Error('boom'); }, { baseMs: 1 }));
+    assert.equal(calls, 1);
+  });
+});

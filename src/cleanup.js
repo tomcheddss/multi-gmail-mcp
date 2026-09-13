@@ -7,7 +7,7 @@ import { getAuthenticatedClient, wrapTokenError } from './auth.js';
 import { getHeader, buildRaw } from './gmail-client.js';
 
 const BATCH = 1000; // Gmail batchModify hard limit
-const META_CONCURRENCY = 25;
+const META_CONCURRENCY = 8;
 
 async function getGmail(email) {
   const auth = await getAuthenticatedClient(email);
@@ -27,12 +27,14 @@ export async function collectMessageIds(gmail, query, max) {
   const ids = [];
   let pageToken;
   while (ids.length < max) {
-    const { data } = await gmail.users.messages.list({
-      userId: 'me',
-      q: query,
-      maxResults: Math.min(500, max - ids.length),
-      pageToken,
-    });
+    const { data } = await withBackoff(() =>
+      gmail.users.messages.list({
+        userId: 'me',
+        q: query,
+        maxResults: Math.min(500, max - ids.length),
+        pageToken,
+      })
+    );
     for (const m of data.messages ?? []) ids.push(m.id);
     pageToken = data.nextPageToken;
     if (!pageToken || !data.messages?.length) break;
@@ -40,16 +42,45 @@ export async function collectMessageIds(gmail, query, max) {
   return ids;
 }
 
+function isRateLimit(err) {
+  const msg = (err?.message ?? '').toLowerCase();
+  return err?.code === 429 || err?.status === 429 ||
+    msg.includes('quota exceeded') || msg.includes('rate limit') || msg.includes('user-rate limit');
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// Retries a Gmail call on rate-limit errors with exponential backoff (up to ~1 min total).
+export async function withBackoff(fn, { retries = 6, baseMs = 1000 } = {}) {
+  let attempt = 0;
+  for (;;) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (!isRateLimit(err) || attempt >= retries) throw err;
+      await sleep(baseMs * 2 ** attempt + Math.random() * 250);
+      attempt += 1;
+    }
+  }
+}
+
+// Bounded-concurrency map that stops scheduling new work as soon as one item fails.
 async function mapLimit(items, limit, fn) {
   const out = new Array(items.length);
   let next = 0;
+  let failed = null;
   async function worker() {
-    while (next < items.length) {
+    while (next < items.length && !failed) {
       const i = next++;
-      out[i] = await fn(items[i], i);
+      try {
+        out[i] = await fn(items[i], i);
+      } catch (err) {
+        failed = failed ?? err;
+      }
     }
   }
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  if (failed) throw failed;
   return out;
 }
 
@@ -106,12 +137,14 @@ export async function senderStats(email, query = 'in:inbox', sampleSize = 500) {
   return run(email, async () => {
     const ids = await collectMessageIds(gmail, query, sampleSize);
     const rows = await mapLimit(ids, META_CONCURRENCY, async id => {
-      const { data: msg } = await gmail.users.messages.get({
-        userId: 'me',
-        id,
-        format: 'metadata',
-        metadataHeaders: ['From', 'Subject', 'Date', 'List-Unsubscribe'],
-      });
+      const { data: msg } = await withBackoff(() =>
+        gmail.users.messages.get({
+          userId: 'me',
+          id,
+          format: 'metadata',
+          metadataHeaders: ['From', 'Subject', 'Date', 'List-Unsubscribe'],
+        })
+      );
       const h = msg.payload?.headers;
       return {
         from: getHeader(h, 'From'),
@@ -139,10 +172,12 @@ export async function bulkModify(
     const ids = await collectMessageIds(gmail, query, max);
     if (dryRun || !ids.length) return { matched: ids.length, modified: 0, dryRun };
     for (let i = 0; i < ids.length; i += BATCH) {
-      await gmail.users.messages.batchModify({
-        userId: 'me',
-        requestBody: { ids: ids.slice(i, i + BATCH), addLabelIds, removeLabelIds },
-      });
+      await withBackoff(() =>
+        gmail.users.messages.batchModify({
+          userId: 'me',
+          requestBody: { ids: ids.slice(i, i + BATCH), addLabelIds, removeLabelIds },
+        })
+      );
     }
     return { matched: ids.length, modified: ids.length, dryRun: false };
   });
