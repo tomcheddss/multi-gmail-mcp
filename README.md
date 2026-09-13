@@ -44,7 +44,7 @@ You only need to do this once.
 1. Go to [console.cloud.google.com](https://console.cloud.google.com) → create a project
 2. Enable the **Gmail API** (APIs & Services → Library)
 3. Configure the **OAuth consent screen** — External, add your Gmail addresses as test users
-4. Add scopes: `gmail.readonly`, `gmail.send`, `gmail.modify`, `gmail.labels`
+4. Add scopes: `gmail.readonly`, `gmail.send`, `gmail.modify`, `gmail.labels`, `gmail.settings.basic`, `calendar.events`
 5. Create a **Desktop app** OAuth credential → download the JSON
 6. Save it to `~/.gmail-mcp-oauth.json`
 
@@ -122,6 +122,11 @@ Restart Claude Desktop after saving. Click the hammer icon to confirm 19 tools a
 | `search_emails` | Search with Gmail syntax (`is:unread`, `from:`, `after:`, etc.) |
 | `get_email` | Fetch full email content by message ID |
 | `list_attachments` | List attachments on a message (name, type, size) |
+| `sender_stats` | Per-sender volume/unread/unsubscribe stats for a query — start triage here |
+| `bulk_modify` | Archive, trash, mark read or relabel every message matching a query (dry-run by default) |
+| `get_unsubscribe_info` / `unsubscribe` | Read List-Unsubscribe headers; one-click POST, mailto, or manual URL |
+| `create_label` / `list_filters` / `create_filter` / `delete_filter` | Labels and Gmail filters |
+| `list_calendars` / `list_calendar_events` / `get_calendar_event` / `delete_calendar_event` | Google Calendar, incl. recurring series cleanup |
 | `get_attachment` | Download one attachment to `~/.gmail-mcp-cache` (owner-only, pruned after 24h) and return its path |
 
 ### Writing Email

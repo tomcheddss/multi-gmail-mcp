@@ -18,6 +18,22 @@ import {
   listLabels,
   modifyLabels,
 } from './gmail-client.js';
+import {
+  senderStats,
+  bulkModify,
+  getUnsubscribeInfo,
+  unsubscribe,
+  ensureLabel,
+  listFilters,
+  createFilter,
+  deleteFilter,
+} from './cleanup.js';
+import {
+  listCalendars,
+  listCalendarEvents,
+  getCalendarEvent,
+  deleteCalendarEvent,
+} from './calendar-client.js';
 
 const TOOLS = [
   {
@@ -335,6 +351,214 @@ const TOOLS = [
       required: ['message_id'],
     },
   },
+  // --- Cleanup: sender stats, bulk actions, unsubscribe, filters -------------
+  {
+    name: 'sender_stats',
+    description:
+      'Sample messages matching a query and return per-sender counts, unread counts, whether the ' +
+      'sender offers List-Unsubscribe, latest date and a sample subject. Sorted by volume. ' +
+      'Use this first when triaging an inbox.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: {
+          type: 'string',
+          description: 'Email address or label. Uses active account if omitted.',
+        },
+        query: { type: 'string', description: 'Gmail search query (default: in:inbox)' },
+        sample_size: { type: 'number', description: 'Messages to sample (default 500, max 2000)' },
+        top: { type: 'number', description: 'How many senders to return (default 50)' },
+      },
+    },
+  },
+  {
+    name: 'bulk_modify',
+    description:
+      'Apply a label change to every message matching a query, up to max_messages. ' +
+      'Actions: archive (remove from Inbox), trash, mark_read, or custom add/remove labels. ' +
+      'Always run with dry_run=true first and confirm the count with the user before executing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: {
+          type: 'string',
+          description: 'Email address or label. Uses active account if omitted.',
+        },
+        query: { type: 'string', description: 'Gmail search query, e.g. "from:news@x.com older_than:1y"' },
+        action: {
+          type: 'string',
+          enum: ['archive', 'trash', 'mark_read', 'custom'],
+          description: 'Preset action, or custom with add_labels/remove_labels',
+        },
+        add_labels: { type: 'array', items: { type: 'string' }, description: 'Label names to add (custom)' },
+        remove_labels: { type: 'array', items: { type: 'string' }, description: 'Label IDs to remove (custom)' },
+        max_messages: { type: 'number', description: 'Safety cap (default 1000, max 10000)' },
+        dry_run: { type: 'boolean', description: 'Only count matches (default true)' },
+      },
+      required: ['query', 'action'],
+    },
+  },
+  {
+    name: 'get_unsubscribe_info',
+    description: 'Read the List-Unsubscribe headers of a message and report how it can be unsubscribed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: {
+          type: 'string',
+          description: 'Email address or label. Uses active account if omitted.',
+        },
+        message_id: { type: 'string', description: 'Email message ID' },
+      },
+      required: ['message_id'],
+    },
+  },
+  {
+    name: 'unsubscribe',
+    description:
+      'Unsubscribe from the sender of a message using its List-Unsubscribe headers: ' +
+      'one-click POST if offered, else a mailto unsubscribe email, else returns a URL for the user to open.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: {
+          type: 'string',
+          description: 'Email address or label. Uses active account if omitted.',
+        },
+        message_id: { type: 'string', description: 'Email message ID' },
+      },
+      required: ['message_id'],
+    },
+  },
+  {
+    name: 'create_label',
+    description: 'Create a Gmail label if it does not exist (nested labels use "Parent/Child").',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: {
+          type: 'string',
+          description: 'Email address or label. Uses active account if omitted.',
+        },
+        name: { type: 'string', description: 'Label name' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'list_filters',
+    description: 'List Gmail filters (criteria and actions) on an account.',
+    inputSchema: { type: 'object', properties: {
+        account: {
+          type: 'string',
+          description: 'Email address or label. Uses active account if omitted.',
+        },
+    } },
+  },
+  {
+    name: 'create_filter',
+    description:
+      'Create a Gmail filter. Matches on from/to/subject/query and can add a label (created if missing), ' +
+      'skip the inbox, mark read, or trash. Applies to future mail only; use bulk_modify for existing mail.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: {
+          type: 'string',
+          description: 'Email address or label. Uses active account if omitted.',
+        },
+        from: { type: 'string', description: 'Sender address or domain' },
+        to: { type: 'string', description: 'Recipient address' },
+        subject: { type: 'string', description: 'Subject contains' },
+        query: { type: 'string', description: 'Gmail search query' },
+        add_label: { type: 'string', description: 'Label name to apply' },
+        skip_inbox: { type: 'boolean', description: 'Archive on arrival' },
+        mark_read: { type: 'boolean', description: 'Mark as read on arrival' },
+        trash: { type: 'boolean', description: 'Send straight to trash' },
+      },
+    },
+  },
+  {
+    name: 'delete_filter',
+    description: 'Delete a Gmail filter by ID.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: {
+          type: 'string',
+          description: 'Email address or label. Uses active account if omitted.',
+        },
+        filter_id: { type: 'string', description: 'Filter ID from list_filters' },
+      },
+      required: ['filter_id'],
+    },
+  },
+  // --- Calendar --------------------------------------------------------------
+  {
+    name: 'list_calendars',
+    description: 'List the calendars visible to an account.',
+    inputSchema: { type: 'object', properties: {
+        account: {
+          type: 'string',
+          description: 'Email address or label. Uses active account if omitted.',
+        },
+    } },
+  },
+  {
+    name: 'list_calendar_events',
+    description:
+      'List calendar events. With recurring_only=true returns recurring SERIES (delete the series ID ' +
+      'to stop all future occurrences). Otherwise returns individual events ordered by start time.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: {
+          type: 'string',
+          description: 'Email address or label. Uses active account if omitted.',
+        },
+        calendar_id: { type: 'string', description: 'Calendar ID (default primary)' },
+        query: { type: 'string', description: 'Free-text search' },
+        time_min: { type: 'string', description: 'RFC3339 lower bound, e.g. 2026-01-01T00:00:00Z' },
+        time_max: { type: 'string', description: 'RFC3339 upper bound' },
+        recurring_only: { type: 'boolean', description: 'Only recurring series (default false)' },
+        max: { type: 'number', description: 'Max results (default 100)' },
+      },
+    },
+  },
+  {
+    name: 'get_calendar_event',
+    description: 'Fetch one calendar event including its description.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: {
+          type: 'string',
+          description: 'Email address or label. Uses active account if omitted.',
+        },
+        event_id: { type: 'string', description: 'Event ID' },
+        calendar_id: { type: 'string', description: 'Calendar ID (default primary)' },
+      },
+      required: ['event_id'],
+    },
+  },
+  {
+    name: 'delete_calendar_event',
+    description:
+      'Delete a calendar event without notifying attendees. Pass a series ID to remove a whole ' +
+      'recurring series. Confirm with the user before calling.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: {
+          type: 'string',
+          description: 'Email address or label. Uses active account if omitted.',
+        },
+        event_id: { type: 'string', description: 'Event or series ID' },
+        calendar_id: { type: 'string', description: 'Calendar ID (default primary)' },
+      },
+      required: ['event_id'],
+    },
+  },
 ];
 
 // Returns a fully configured MCP Server instance with isolated session state.
@@ -519,6 +743,166 @@ export function createServer() {
             filename: args.filename,
           });
           text = `Saved ${saved.filename} (${saved.mimeType}, ${saved.size} bytes) to ${saved.path}`;
+          break;
+        }
+
+        case 'sender_stats': {
+          const email = resolveAccount(args.account, activeAccount);
+          const sample = Math.min(args.sample_size ?? 500, 2000);
+          const { sampled, senders } = await senderStats(email, args.query ?? 'in:inbox', sample);
+          const top = senders.slice(0, args.top ?? 50);
+          text = [
+            `Sampled ${sampled} messages on ${email} (${senders.length} distinct senders). Top ${top.length}:`,
+            '',
+            ...top.map(
+              s =>
+                `${String(s.count).padStart(4)}  ${s.address}` +
+                (s.name ? `  (${s.name})` : '') +
+                `  unread:${s.unread}` +
+                (s.hasUnsubscribe ? '  [unsub]' : '') +
+                `  latest:${s.latest.slice(0, 16)}` +
+                `  e.g. "${s.sampleSubject.slice(0, 60)}"`
+            ),
+          ].join('\n');
+          break;
+        }
+
+        case 'bulk_modify': {
+          const email = resolveAccount(args.account, activeAccount);
+          const presets = {
+            archive: { removeLabelIds: ['INBOX'] },
+            trash: { addLabelIds: ['TRASH'] },
+            mark_read: { removeLabelIds: ['UNREAD'] },
+          };
+          let change = presets[args.action];
+          if (args.action === 'custom') {
+            const addLabelIds = [];
+            for (const n of args.add_labels ?? []) addLabelIds.push((await ensureLabel(email, n)).id);
+            change = { addLabelIds, removeLabelIds: args.remove_labels ?? [] };
+          }
+          if (!change) throw new Error(`Unknown action: ${args.action}`);
+          const dryRun = args.dry_run !== false;
+          const max = Math.min(args.max_messages ?? 1000, 10000);
+          const r = await bulkModify(email, args.query, change, { max, dryRun });
+          text = dryRun
+            ? `Dry run: ${r.matched} message(s) on ${email} match "${args.query}" (cap ${max}). Re-run with dry_run=false to ${args.action}.`
+            : `${args.action}: modified ${r.modified} message(s) on ${email} matching "${args.query}".`;
+          break;
+        }
+
+        case 'get_unsubscribe_info': {
+          const email = resolveAccount(args.account, activeAccount);
+          const i = await getUnsubscribeInfo(email, args.message_id);
+          text = [
+            `From: ${i.from}`,
+            `Subject: ${i.subject}`,
+            `One-click: ${i.oneClick ? 'yes' : 'no'}`,
+            `URL: ${i.url ?? 'none'}`,
+            `Mailto: ${i.mailto ?? 'none'}`,
+          ].join('\n');
+          break;
+        }
+
+        case 'unsubscribe': {
+          const email = resolveAccount(args.account, activeAccount);
+          const r = await unsubscribe(email, args.message_id);
+          if (r.method === 'none') text = `No List-Unsubscribe header on this message from ${r.from}. Consider a filter to trash instead.`;
+          else if (r.method === 'manual') text = `No automatic method for ${r.from}. Open this URL to unsubscribe: ${r.url}`;
+          else text = `Unsubscribed from ${r.from} via ${r.method}${r.status ? ` (HTTP ${r.status})` : ''}.` + (r.done ? '' : ' Response was not OK; verify manually: ' + (r.url ?? r.mailto));
+          break;
+        }
+
+        case 'create_label': {
+          const email = resolveAccount(args.account, activeAccount);
+          const l = await ensureLabel(email, args.name);
+          text = `${l.created ? 'Created' : 'Already exists'}: ${l.name} (id ${l.id})`;
+          break;
+        }
+
+        case 'list_filters': {
+          const email = resolveAccount(args.account, activeAccount);
+          const filters = await listFilters(email);
+          text = filters.length
+            ? filters
+                .map(f => `${f.id}  criteria=${JSON.stringify(f.criteria)}  action=${JSON.stringify(f.action)}`)
+                .join('\n')
+            : `No filters on ${email}.`;
+          break;
+        }
+
+        case 'create_filter': {
+          const email = resolveAccount(args.account, activeAccount);
+          const f = await createFilter(email, {
+            from: args.from,
+            to: args.to,
+            subject: args.subject,
+            query: args.query,
+            addLabel: args.add_label,
+            skipInbox: !!args.skip_inbox,
+            markRead: !!args.mark_read,
+            trash: !!args.trash,
+          });
+          text = `Filter created on ${email}: id ${f.id}`;
+          break;
+        }
+
+        case 'delete_filter': {
+          const email = resolveAccount(args.account, activeAccount);
+          await deleteFilter(email, args.filter_id);
+          text = `Filter ${args.filter_id} deleted on ${email}.`;
+          break;
+        }
+
+        case 'list_calendars': {
+          const email = resolveAccount(args.account, activeAccount);
+          const cals = await listCalendars(email);
+          text = cals.map(c => `${c.id}  ${c.summary}${c.primary ? '  [primary]' : ''}  (${c.accessRole})`).join('\n');
+          break;
+        }
+
+        case 'list_calendar_events': {
+          const email = resolveAccount(args.account, activeAccount);
+          const events = await listCalendarEvents(email, {
+            calendarId: args.calendar_id,
+            query: args.query,
+            timeMin: args.time_min,
+            timeMax: args.time_max,
+            max: args.max,
+            recurringOnly: !!args.recurring_only,
+          });
+          text = events.length
+            ? events
+                .map(
+                  e =>
+                    `${e.id}  ${e.start.slice(0, 16)}  ${e.summary}` +
+                    (e.recurring ? `  [recurring ${e.recurrence.join(' ')}]` : '') +
+                    (e.organizer ? `  organizer:${e.organizer}` : '') +
+                    `  attendees:${e.attendees}`
+                )
+                .join('\n')
+            : 'No events found.';
+          break;
+        }
+
+        case 'get_calendar_event': {
+          const email = resolveAccount(args.account, activeAccount);
+          const e = await getCalendarEvent(email, args.event_id, args.calendar_id);
+          text = [
+            `Title: ${e.summary}`,
+            `Start: ${e.start}`,
+            `Organizer: ${e.organizer}`,
+            `Recurring: ${e.recurring ? e.recurrence.join(' ') || 'instance' : 'no'}`,
+            `Attendees: ${e.attendees}`,
+            '',
+            e.description,
+          ].join('\n');
+          break;
+        }
+
+        case 'delete_calendar_event': {
+          const email = resolveAccount(args.account, activeAccount);
+          await deleteCalendarEvent(email, args.event_id, args.calendar_id);
+          text = `Deleted event ${args.event_id} on ${email}.`;
           break;
         }
 
