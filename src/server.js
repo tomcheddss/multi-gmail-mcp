@@ -15,6 +15,8 @@ import {
   sendEmail,
   replyToEmail,
   createDraft,
+  createReplyDraft,
+  listDrafts,
   listLabels,
   modifyLabels,
 } from './gmail-client.js';
@@ -257,6 +259,42 @@ const TOOLS = [
         bcc: { type: 'string', description: 'BCC recipients (optional)' },
       },
       required: ['to', 'subject', 'body'],
+    },
+  },
+  {
+    name: 'create_reply_draft',
+    description:
+      'Create a draft REPLY inside an existing thread (sets threadId, In-Reply-To and References so ' +
+      'it appears under the conversation in Gmail and other clients). Use this, not create_draft, ' +
+      'whenever replying to a message. Never sends.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: {
+          type: 'string',
+          description: 'Email address or label. Uses active account if omitted.',
+        },
+        message_id: { type: 'string', description: 'ID of the message being replied to' },
+        body: { type: 'string', description: 'Plain-text reply body' },
+        reply_all: { type: 'boolean', description: 'Also CC the original recipients (default false)' },
+      },
+      required: ['message_id', 'body'],
+    },
+  },
+  {
+    name: 'list_drafts',
+    description:
+      'List drafts, optionally only those on a given thread_id. Check this before creating a reply ' +
+      'draft so a thread never gets two drafts.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: {
+          type: 'string',
+          description: 'Email address or label. Uses active account if omitted.',
+        },
+        thread_id: { type: 'string', description: 'Only drafts on this thread (optional)' },
+      },
     },
   },
   {
@@ -1002,6 +1040,24 @@ export function createServer() {
             bcc: args.bcc,
           });
           text = `Draft created in ${email}. Draft ID: ${draft.id}`;
+          break;
+        }
+
+        case 'create_reply_draft': {
+          const email = resolveAccount(args.account, activeAccount);
+          const d = await createReplyDraft(email, args.message_id, args.body, {
+            replyAll: !!args.reply_all,
+          });
+          text = `Reply draft created in ${email} on thread ${d.threadId} to ${d.to} ("${d.subject}"). Draft ID: ${d.id}`;
+          break;
+        }
+
+        case 'list_drafts': {
+          const email = resolveAccount(args.account, activeAccount);
+          const drafts = await listDrafts(email, { threadId: args.thread_id });
+          text = drafts.length
+            ? drafts.map(d => `${d.id}  thread:${d.threadId}  message:${d.messageId}`).join('\n')
+            : (args.thread_id ? `No drafts on thread ${args.thread_id}.` : 'No drafts.');
           break;
         }
 

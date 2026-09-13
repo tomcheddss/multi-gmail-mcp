@@ -136,7 +136,9 @@ Restart Claude Desktop after saving. Click the hammer icon to confirm 19 tools a
 |---|---|
 | `send_email` | Send an email (supports To, CC, BCC) |
 | `reply_to_email` | Reply in thread, preserving References headers |
-| `create_draft` | Save an email as a draft |
+| `create_draft` | Save a new email as a draft |
+| `create_reply_draft` | Draft a reply inside the original thread (threadId + In-Reply-To + References) |
+| `list_drafts` | List drafts, optionally for one thread |
 
 ### Organization
 

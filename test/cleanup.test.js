@@ -106,3 +106,17 @@ describe('withBackoff', () => {
     assert.equal(calls, 1);
   });
 });
+
+describe('buildRaw threading headers', () => {
+  it('emits In-Reply-To and References so replies thread in every client', async () => {
+    const { buildRaw } = await import('../src/gmail-client.js');
+    const raw = buildRaw({
+      from: 'me@x.com', to: 'you@y.com', subject: 'Re: Hi', body: 'ok',
+      inReplyTo: '<abc@y.com>', references: '<root@y.com> <abc@y.com>',
+    });
+    const decoded = Buffer.from(raw, 'base64url').toString('utf8');
+    assert.match(decoded, /In-Reply-To: <abc@y\.com>/);
+    assert.match(decoded, /References: <root@y\.com> <abc@y\.com>/);
+    assert.match(decoded, /Subject: Re: Hi/);
+  });
+});

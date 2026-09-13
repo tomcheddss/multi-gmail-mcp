@@ -165,6 +165,7 @@ export async function getEmail(email, messageId) {
       date: getHeader(msg.payload?.headers, 'Date'),
       messageId: getHeader(msg.payload?.headers, 'Message-ID'),
       references: getHeader(msg.payload?.headers, 'References'),
+      replyTo: getHeader(msg.payload?.headers, 'Reply-To'),
       body: extractBody(msg.payload),
       labels: msg.labelIds ?? [],
     };
@@ -256,6 +257,48 @@ export async function createDraft(email, { to, subject, body, cc, bcc }) {
       requestBody: { message: { raw } },
     });
     return data;
+  });
+}
+
+// Creates a draft REPLY inside the original message's thread. Sets threadId plus
+// In-Reply-To / References and mirrors the subject, which is what Gmail requires
+// for the draft to appear under the conversation instead of starting a new one.
+export async function createReplyDraft(email, messageId, body, { replyAll = false } = {}) {
+  const original = await getEmail(email, messageId);
+  const { gmail } = await getGmail(email);
+  return run(email, async () => {
+    const subject = /^re:/i.test(original.subject) ? original.subject : `Re: ${original.subject}`;
+    const references = original.references
+      ? `${original.references} ${original.messageId}`
+      : original.messageId;
+    // Reply-To wins over From when present; otherwise reply to the sender.
+    const to = original.replyTo || original.from;
+    const cc = replyAll ? [original.to, original.cc].filter(Boolean).join(', ') : undefined;
+    const raw = buildRaw({
+      from: email,
+      to,
+      cc,
+      subject,
+      body,
+      inReplyTo: original.messageId,
+      references,
+    });
+    const { data } = await gmail.users.drafts.create({
+      userId: 'me',
+      requestBody: { message: { raw, threadId: original.threadId } },
+    });
+    return { id: data.id, threadId: original.threadId, to, subject };
+  });
+}
+
+// Lists drafts, optionally only those on one thread — used to avoid drafting twice.
+export async function listDrafts(email, { threadId } = {}) {
+  const { gmail } = await getGmail(email);
+  return run(email, async () => {
+    const { data } = await gmail.users.drafts.list({ userId: 'me', maxResults: 100 });
+    const drafts = data.drafts ?? [];
+    const filtered = threadId ? drafts.filter(d => d.message?.threadId === threadId) : drafts;
+    return filtered.map(d => ({ id: d.id, messageId: d.message?.id, threadId: d.message?.threadId }));
   });
 }
 
