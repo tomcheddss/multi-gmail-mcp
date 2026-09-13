@@ -10,6 +10,8 @@ import { initiateAuth, checkAuthStatus } from './auth.js';
 import {
   searchEmails,
   getEmail,
+  listMessageAttachments,
+  getAttachment,
   sendEmail,
   replyToEmail,
   createDraft,
@@ -145,6 +147,42 @@ const TOOLS = [
           description: 'Email address or label. Uses active account if omitted.',
         },
         message_id: { type: 'string', description: 'Email message ID' },
+      },
+      required: ['message_id'],
+    },
+  },
+  {
+    name: 'list_attachments',
+    description: 'List the attachments on an email (filename, type, size) without downloading them.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: {
+          type: 'string',
+          description: 'Email address or label. Uses active account if omitted.',
+        },
+        message_id: { type: 'string', description: 'Email message ID' },
+      },
+      required: ['message_id'],
+    },
+  },
+  {
+    name: 'get_attachment',
+    description:
+      'Download one attachment from an email into a private local cache folder ' +
+      '(~/.gmail-mcp-cache, owner-only, pruned after 24h) and return its file path. ' +
+      'Identify the attachment by filename or attachment_id (see list_attachments). ' +
+      'Only downloads on explicit request — never bulk-fetches.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: {
+          type: 'string',
+          description: 'Email address or label. Uses active account if omitted.',
+        },
+        message_id: { type: 'string', description: 'Email message ID' },
+        filename: { type: 'string', description: 'Attachment filename (case-insensitive)' },
+        attachment_id: { type: 'string', description: 'Attachment ID from list_attachments' },
       },
       required: ['message_id'],
     },
@@ -457,6 +495,30 @@ export function createServer() {
           ]
             .filter(l => l !== null)
             .join('\n');
+          break;
+        }
+
+        case 'list_attachments': {
+          const email = resolveAccount(args.account, activeAccount);
+          const list = await listMessageAttachments(email, args.message_id);
+          text = list.length
+            ? list
+                .map(a => `${a.filename}  (${a.mimeType}, ${a.size} bytes)  id: ${a.attachmentId}`)
+                .join('\n')
+            : 'No attachments on this message.';
+          break;
+        }
+
+        case 'get_attachment': {
+          const email = resolveAccount(args.account, activeAccount);
+          if (!args.filename && !args.attachment_id) {
+            throw new Error('Provide filename or attachment_id.');
+          }
+          const saved = await getAttachment(email, args.message_id, {
+            attachmentId: args.attachment_id,
+            filename: args.filename,
+          });
+          text = `Saved ${saved.filename} (${saved.mimeType}, ${saved.size} bytes) to ${saved.path}`;
           break;
         }
 

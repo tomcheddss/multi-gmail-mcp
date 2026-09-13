@@ -121,6 +121,8 @@ Restart Claude Desktop after saving. Click the hammer icon to confirm 19 tools a
 |---|---|
 | `search_emails` | Search with Gmail syntax (`is:unread`, `from:`, `after:`, etc.) |
 | `get_email` | Fetch full email content by message ID |
+| `list_attachments` | List attachments on a message (name, type, size) |
+| `get_attachment` | Download one attachment to `~/.gmail-mcp-cache` (owner-only, pruned after 24h) and return its path |
 
 ### Writing Email
 

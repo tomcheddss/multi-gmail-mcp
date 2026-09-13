@@ -1,5 +1,12 @@
 import { google } from 'googleapis';
+import { homedir } from 'os';
+import { join, basename } from 'path';
+import { mkdirSync, writeFileSync, readdirSync, statSync, unlinkSync, chmodSync } from 'fs';
 import { getAuthenticatedClient, wrapTokenError } from './auth.js';
+
+// Attachments are saved to a private, owner-only cache folder and pruned after 24h.
+const CACHE_DIR = process.env.GMAIL_MCP_CACHE_DIR ?? join(homedir(), '.gmail-mcp-cache');
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 async function getGmail(email) {
   const auth = await getAuthenticatedClient(email);
@@ -44,6 +51,55 @@ export function extractBody(payload) {
   }
 
   return '';
+}
+
+// Walks a MIME payload and returns every part that carries a real attachment.
+export function listAttachments(payload, acc = []) {
+  if (!payload) return acc;
+  if (payload.filename && payload.body?.attachmentId) {
+    acc.push({
+      filename: payload.filename,
+      mimeType: payload.mimeType ?? 'application/octet-stream',
+      size: payload.body.size ?? 0,
+      attachmentId: payload.body.attachmentId,
+    });
+  }
+  for (const part of payload.parts ?? []) listAttachments(part, acc);
+  return acc;
+}
+
+// Strips path separators and control characters so a hostile filename can't escape the cache dir.
+export function sanitizeFilename(name) {
+  const clean = basename(String(name ?? ''))
+    .replace(/[\x00-\x1f\x7f/\\]/g, '_')
+    .replace(/^\.+/, '_')
+    .slice(0, 150);
+  return clean || 'attachment';
+}
+
+function ensureCacheDir() {
+  mkdirSync(CACHE_DIR, { recursive: true, mode: 0o700 });
+  chmodSync(CACHE_DIR, 0o700);
+  const cutoff = Date.now() - CACHE_TTL_MS;
+  for (const f of readdirSync(CACHE_DIR)) {
+    const full = join(CACHE_DIR, f);
+    try {
+      if (statSync(full).mtimeMs < cutoff) unlinkSync(full);
+    } catch {
+      // ignore files that vanish mid-prune
+    }
+  }
+  return CACHE_DIR;
+}
+
+// Writes bytes to the cache and returns the absolute path. Exported for tests.
+export function saveAttachmentBytes(messageId, filename, bytes) {
+  const dir = ensureCacheDir();
+  const safe = sanitizeFilename(filename);
+  const path = join(dir, `${String(messageId).slice(0, 12)}_${safe}`);
+  writeFileSync(path, bytes, { mode: 0o600 });
+  chmodSync(path, 0o600);
+  return path;
 }
 
 export function buildRaw({ from, to, cc, bcc, subject, body, inReplyTo, references }) {
@@ -112,6 +168,47 @@ export async function getEmail(email, messageId) {
       body: extractBody(msg.payload),
       labels: msg.labelIds ?? [],
     };
+  });
+}
+
+export async function listMessageAttachments(email, messageId) {
+  const { gmail } = await getGmail(email);
+  return run(email, async () => {
+    const { data: msg } = await gmail.users.messages.get({
+      userId: 'me',
+      id: messageId,
+      format: 'full',
+    });
+    return listAttachments(msg.payload);
+  });
+}
+
+// Downloads one attachment (by attachmentId or filename) into the local cache.
+export async function getAttachment(email, messageId, { attachmentId, filename } = {}) {
+  const { gmail } = await getGmail(email);
+  return run(email, async () => {
+    const { data: msg } = await gmail.users.messages.get({
+      userId: 'me',
+      id: messageId,
+      format: 'full',
+    });
+    const all = listAttachments(msg.payload);
+    const target = all.find(a =>
+      (attachmentId && a.attachmentId === attachmentId) ||
+      (filename && a.filename.toLowerCase() === String(filename).toLowerCase())
+    );
+    if (!target) {
+      const names = all.map(a => a.filename).join(', ') || 'none';
+      throw new Error(`Attachment not found on message ${messageId}. Available: ${names}`);
+    }
+    const { data } = await gmail.users.messages.attachments.get({
+      userId: 'me',
+      messageId,
+      id: target.attachmentId,
+    });
+    const bytes = Buffer.from(data.data, 'base64url');
+    const path = saveAttachmentBytes(messageId, target.filename, bytes);
+    return { ...target, size: bytes.length, path };
   });
 }
 
